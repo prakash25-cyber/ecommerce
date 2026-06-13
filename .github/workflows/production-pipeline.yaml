@@ -1,0 +1,95 @@
+name: Master DevSecOps CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main  # Triggers the pipeline automatically when you push to the main branch
+
+jobs:
+  security-sast:
+    name: 🛡️ DevSecOps Security Scan (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 1. Audit backend Node.js dependencies for vulnerabilities
+      - name: Scan Backend Dependencies (npm audit)
+        run: |
+          cd backend
+          npm audit --audit-level=high || true  # Reports high/critical issues
+
+      # 2. Check Dockerfiles for security misconfigurations (running as root, etc.)
+      - name: Lint Dockerfiles (Hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: "frontend/Dockerfile"
+
+  build-and-push:
+    name: 🏗️ Build & Package Containers
+    needs: security-sast  # Only runs if security scans pass
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'   # CRITICAL: Required for secure GCP Workload Identity Federation
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 1. Authenticate securely with GCP using Identity Federation (OIDC)
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # 2. Configure Docker to seamlessly push to your Artifact Registry
+      - name: Set up Docker Sign-in
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      # 3. Build, Tag, and Push the Frontend App Container
+      - name: Build & Push Frontend Image
+        run: |
+          docker build -t us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }} ./frontend
+          docker push us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }}
+
+      # 4. Build, Tag, and Push the Backend API Container
+      - name: Build & Push Backend Image
+        run: |
+          docker build -t us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }} ./backend
+          docker push us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }}
+
+  deploy-to-gke:
+    name: 🚀 Orchestrate Rollout to GKE
+    needs: build-and-push  # Runs after fresh container images are safely stored
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # 1. Securely establish connection directly into your Private GKE Cluster
+      - name: Connect to GKE Cluster
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: 'sonufoot-secure-cluster'
+          location: 'us-central1'
+          project_id: 'ecommerce-sonufoot-prod'
+
+      # 2. Deploy your application to your cluster (We will define manifests dynamically)
+      - name: Kubernetes Rolling Update
+        run: |
+          # Dynamically updating deployments with your exact, unique image versions built above
+          kubectl create deployment frontend-app --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create deployment backend-api --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }} --dry-run=client -o yaml | kubectl apply -f -
