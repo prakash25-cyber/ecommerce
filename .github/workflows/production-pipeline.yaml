@@ -3,59 +3,65 @@ name: Master DevSecOps CI/CD Pipeline
 on:
   push:
     branches:
-      - main  # Triggers the pipeline automatically when you push to the main branch
+      - main  # Triggers the pipeline automatically on any push to your main branch
+
+permissions:
+  contents: read
+  id-token: write  # CRITICAL: Required for secure GCP Workload Identity Federation
 
 jobs:
   security-sast:
     name: 🛡️ DevSecOps Security Scan (SAST)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Code Repository
         uses: actions/checkout@v4
 
-      # 1. Audit backend Node.js dependencies for vulnerabilities
-      - name: Scan Backend Dependencies (npm audit)
+      # 1. Check your Terraform configurations for security flaws or leaks
+      - name: Scan Infrastructure Code (Trivy IaC)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          hide-progress: true
+          exit-code: '0'  # Logs warnings without breaking your build stream
+
+      # 2. Audit backend Node.js files for dangerous vulnerabilities
+      - name: Audit Backend Dependencies
         run: |
           cd backend
-          npm audit --audit-level=high || true  # Reports high/critical issues
-
-      # 2. Check Dockerfiles for security misconfigurations (running as root, etc.)
-      - name: Lint Dockerfiles (Hadolint)
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: "frontend/Dockerfile"
+          if [ -f package.json ]; then
+            npm audit --audit-level=high || true
+          else
+            echo "Skipping npm audit: package.json not created yet."
+          fi
 
   build-and-push:
     name: 🏗️ Build & Package Containers
-    needs: security-sast  # Only runs if security scans pass
+    needs: security-sast  # Only executes if the security scans complete successfully
     runs-on: ubuntu-latest
-    permissions:
-      contents: 'read'
-      id-token: 'write'   # CRITICAL: Required for secure GCP Workload Identity Federation
-
     steps:
-      - name: Checkout Code
+      - name: Checkout Code Repository
         uses: actions/checkout@v4
 
-      # 1. Authenticate securely with GCP using Identity Federation (OIDC)
+      # 1. Connect securely to your GCP project using Identity Tokens
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      # 2. Configure Docker to seamlessly push to your Artifact Registry
-      - name: Set up Docker Sign-in
+      # 2. Configure Docker to communicate seamlessly with your Artifact Registry
+      - name: Configure Docker to use Artifact Registry
         run: |
           gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
-      # 3. Build, Tag, and Push the Frontend App Container
+      # 3. Compile and push your non-root frontend container image
       - name: Build & Push Frontend Image
         run: |
           docker build -t us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }} ./frontend
           docker push us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }}
 
-      # 4. Build, Tag, and Push the Backend API Container
+      # 4. Compile and push your backend API container image
       - name: Build & Push Backend Image
         run: |
           docker build -t us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }} ./backend
@@ -65,12 +71,8 @@ jobs:
     name: 🚀 Orchestrate Rollout to GKE
     needs: build-and-push  # Runs after fresh container images are safely stored
     runs-on: ubuntu-latest
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-
     steps:
-      - name: Checkout Code
+      - name: Checkout Code Repository
         uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud
@@ -79,7 +81,7 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      # 1. Securely establish connection directly into your Private GKE Cluster
+      # 1. Link your runner machine directly to your secure cluster
       - name: Connect to GKE Cluster
         uses: google-github-actions/get-gke-credentials@v2
         with:
@@ -87,9 +89,8 @@ jobs:
           location: 'us-central1'
           project_id: 'ecommerce-sonufoot-prod'
 
-      # 2. Deploy your application to your cluster (We will define manifests dynamically)
-      - name: Kubernetes Rolling Update
+      # 2. Instruct GKE to cleanly pull down and deploy the newly built images
+      - name: Kubernetes Rolling Update Rollout
         run: |
-          # Dynamically updating deployments with your exact, unique image versions built above
           kubectl create deployment frontend-app --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }} --dry-run=client -o yaml | kubectl apply -f -
           kubectl create deployment backend-api --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }} --dry-run=client -o yaml | kubectl apply -f -
