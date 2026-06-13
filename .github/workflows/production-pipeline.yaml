@@ -44,8 +44,9 @@ jobs:
         uses: actions/checkout@v4
 
       # 1. Connect securely to your GCP project using Identity Tokens
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - id: 'auth'
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
@@ -75,13 +76,15 @@ jobs:
       - name: Checkout Code Repository
         uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      # 1. Connect securely to your GCP project using Identity Tokens
+      - id: 'auth'
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      # 1. Link your runner machine directly to your secure cluster
+      # 2. Link your runner machine directly to your secure cluster
       - name: Connect to GKE Cluster
         uses: google-github-actions/get-gke-credentials@v2
         with:
@@ -89,7 +92,7 @@ jobs:
           location: 'us-central1'
           project_id: 'ecommerce-sonufoot-prod'
 
-      # 2. Instruct GKE to cleanly pull down and deploy the newly built images
+      # 3. Instruct GKE to cleanly pull down and deploy the newly built images
       - name: Kubernetes Rolling Update Rollout
         run: |
           kubectl create deployment frontend-app --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }} --dry-run=client -o yaml | kubectl apply -f -
