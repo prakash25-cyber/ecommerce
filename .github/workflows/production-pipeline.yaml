@@ -92,7 +92,7 @@ jobs:
           location: 'us-central1'
           project_id: 'ecommerce-sonufoot-prod'
 
-      # 3. Securely check deployment existence and run a dynamic Rolling Update
+      # 3. Instruct GKE to cleanly pull down and deploy the newly built images
       - name: Kubernetes Rolling Update Rollout
         run: |
           # Safe fallback rollout deployment check for Frontend
@@ -103,7 +103,6 @@ jobs:
           kubectl get deployment backend-api || kubectl create deployment backend-api --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }}
           kubectl set image deployment/backend-api backend=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }}
           
-          # Verify rollouts
-          kubectl rollout status deployment/frontend-app --timeout=60s
-          kubectl rollout status deployment/backend-api --timeout=60s
-          
+          # Increased timeout to 300s to allow GKE Autopilot to scale nodes and download images cleanly
+          kubectl rollout status deployment/frontend-app --timeout=300s
+          kubectl rollout status deployment/backend-api --timeout=300s
