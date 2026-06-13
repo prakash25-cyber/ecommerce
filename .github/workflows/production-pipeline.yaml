@@ -48,8 +48,8 @@ jobs:
         name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       # 2. Configure Docker to communicate seamlessly with your Artifact Registry
       - name: Configure Docker to use Artifact Registry
@@ -81,8 +81,8 @@ jobs:
         name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       # 2. Link your runner machine directly to your secure cluster
       - name: Connect to GKE Cluster
@@ -92,8 +92,17 @@ jobs:
           location: 'us-central1'
           project_id: 'ecommerce-sonufoot-prod'
 
-      # 3. Instruct GKE to cleanly pull down and deploy the newly built images
+      # 3. Securely check deployment existence and run a dynamic Rolling Update
       - name: Kubernetes Rolling Update Rollout
         run: |
-          kubectl create deployment frontend-app --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }} --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create deployment backend-api --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }} --dry-run=client -o yaml | kubectl apply -f -
+          # Safe fallback rollout deployment check for Frontend
+          kubectl get deployment frontend-app || kubectl create deployment frontend-app --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }}
+          kubectl set image deployment/frontend-app frontend=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/frontend:${{ github.sha }}
+          
+          # Safe fallback rollout deployment check for Backend
+          kubectl get deployment backend-api || kubectl create deployment backend-api --image=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }}
+          kubectl set image deployment/backend-api backend=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }}
+          
+          # Verify rollouts
+          kubectl rollout status deployment/frontend-app --timeout=60s
+          kubectl rollout status deployment/backend-api --timeout=60s
