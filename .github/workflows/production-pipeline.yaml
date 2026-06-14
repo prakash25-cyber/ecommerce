@@ -106,3 +106,4 @@ jobs:
           # Increased timeout to 300s to allow GKE Autopilot to scale nodes and download images cleanly
           kubectl rollout status deployment/frontend-app --timeout=300s
           kubectl rollout status deployment/backend-api --timeout=300s
+          
