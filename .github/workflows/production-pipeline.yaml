@@ -104,6 +104,5 @@ jobs:
           kubectl set image deployment/backend-api backend=us-central1-docker.pkg.dev/ecommerce-sonufoot-prod/ecommerce-web-repo/backend:${{ github.sha }}
           
           # Increased timeout to 300s to allow GKE Autopilot to scale nodes and download images cleanly
-          kubectl rollout status deployment/frontend-app --timeout=300s
-          kubectl rollout status deployment/backend-api --timeout=300s
-          
+          kubectl rollout status deployment/frontend-app --timeout=600s
+          kubectl rollout status deployment/backend-api --timeout=600s
